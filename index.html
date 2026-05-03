@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flappy Garrett</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a2e;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      font-family: 'Courier New', monospace;
+    }
+    canvas {
+      display: block;
+      border: 3px solid #e94560;
+      image-rendering: pixelated;
+    }
+  </style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+
+  const W = 400;
+  const H = 600;
+  canvas.width = W;
+  canvas.height = H;
+
+  // ── CHANGE THIS LINE to your Garrett image filename ──
+  const SPRITE_SRC = 'gary.png';
+
+  const garrettImg = new Image();
+  garrettImg.src = SPRITE_SRC;
+  let spriteLoaded = false;
+  garrettImg.onload = () => spriteLoaded = true;
+
+  // Game constants
+  const GRAVITY      = 0.45;
+  const FLAP_FORCE   = -6.5;
+  const PIPE_SPEED   = 2.8;
+  const PIPE_WIDTH   = 60;
+  const PIPE_GAP     = 160;
+  const PIPE_INTERVAL= 90;  // frames between pipes
+  const GARRETT_W    = 48;
+  const GARRETT_H    = 48;
+
+  // Colors
+  const SKY_TOP    = '#70c5ce';
+  const SKY_BOT    = '#c9e8f0';
+  const PIPE_COLOR = '#5ab552';
+  const PIPE_EDGE  = '#3d8b3d';
+  const GROUND_COL = '#ded895';
+  const GROUND_LINE= '#c8b560';
+
+  const GROUND_H = 80;
+
+  let state = 'start'; // 'start' | 'playing' | 'dead'
+  let garrett, pipes, score, frame, hiScore;
+
+  hiScore = 0;
+
+  function resetGame() {
+    garrett = {
+      x: 100,
+      y: H / 2 - GARRETT_H / 2,
+      vy: 0,
+      rotation: 0
+    };
+    pipes = [];
+    score = 0;
+    frame = 0;
+  }
+
+  function flap() {
+    if (state === 'start') {
+      state = 'playing';
+      garrett.vy = FLAP_FORCE;
+      return;
+    }
+    if (state === 'playing') {
+      garrett.vy = FLAP_FORCE;
+    }
+    if (state === 'dead') {
+      state = 'start';
+      resetGame();
+    }
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.code === 'Space' || e.code === 'ArrowUp') {
+      e.preventDefault();
+      flap();
+    }
+  });
+  canvas.addEventListener('click', flap);
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); flap(); }, { passive: false });
+
+  function spawnPipe() {
+    const minTop = 60;
+    const maxTop = H - GROUND_H - PIPE_GAP - 60;
+    const topH = Math.floor(Math.random() * (maxTop - minTop + 1)) + minTop;
+    pipes.push({ x: W, topH, passed: false });
+  }
+
+  function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+    const margin = 6; // forgiveness pixels
+    return ax + margin < bx + bw &&
+           ax + aw - margin > bx &&
+           ay + margin < by + bh &&
+           ay + ah - margin > by;
+  }
+
+  function update() {
+    if (state !== 'playing') return;
+
+    frame++;
+
+    // Physics
+    garrett.vy += GRAVITY;
+    garrett.y  += garrett.vy;
+    garrett.rotation = Math.min(Math.max(garrett.vy * 3, -25), 90);
+
+    // Spawn pipes
+    if (frame % PIPE_INTERVAL === 0) spawnPipe();
+
+    // Move pipes & score
+    for (let p of pipes) {
+      p.x -= PIPE_SPEED;
+      if (!p.passed && p.x + PIPE_WIDTH < garrett.x) {
+        p.passed = true;
+        score++;
+        if (score > hiScore) hiScore = score;
+      }
+    }
+    pipes = pipes.filter(p => p.x + PIPE_WIDTH > -10);
+
+    // Collision: ground / ceiling
+    if (garrett.y + GARRETT_H >= H - GROUND_H || garrett.y <= 0) {
+      state = 'dead';
+      return;
+    }
+
+    // Collision: pipes
+    for (let p of pipes) {
+      const bottomPipeY = p.topH + PIPE_GAP;
+      // top pipe
+      if (rectsOverlap(garrett.x, garrett.y, GARRETT_W, GARRETT_H,
+                        p.x, 0, PIPE_WIDTH, p.topH)) {
+        state = 'dead'; return;
+      }
+      // bottom pipe
+      if (rectsOverlap(garrett.x, garrett.y, GARRETT_W, GARRETT_H,
+                        p.x, bottomPipeY, PIPE_WIDTH, H - bottomPipeY)) {
+        state = 'dead'; return;
+      }
+    }
+  }
+
+  // Scrolling ground offset
+  let groundX = 0;
+
+  function drawBackground() {
+    const grad = ctx.createLinearGradient(0, 0, 0, H - GROUND_H);
+    grad.addColorStop(0, SKY_TOP);
+    grad.addColorStop(1, SKY_BOT);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H - GROUND_H);
+  }
+
+  function drawPipe(p) {
+    const capH  = 20;
+    const capExtra = 5;
+    const bottomY = p.topH + PIPE_GAP;
+
+    // Top pipe body
+    ctx.fillStyle = PIPE_COLOR;
+    ctx.fillRect(p.x, 0, PIPE_WIDTH, p.topH - capH);
+    // Top pipe cap
+    ctx.fillStyle = PIPE_EDGE;
+    ctx.fillRect(p.x - capExtra, p.topH - capH, PIPE_WIDTH + capExtra * 2, capH);
+
+    // Bottom pipe body
+    ctx.fillStyle = PIPE_COLOR;
+    ctx.fillRect(p.x, bottomY + capH, PIPE_WIDTH, H - (bottomY + capH));
+    // Bottom pipe cap
+    ctx.fillStyle = PIPE_EDGE;
+    ctx.fillRect(p.x - capExtra, bottomY, PIPE_WIDTH + capExtra * 2, capH);
+
+    // Highlight stripe
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.fillRect(p.x + 6, 0, 8, p.topH - capH);
+    ctx.fillRect(p.x + 6, bottomY + capH, 8, H - (bottomY + capH));
+  }
+
+  function drawGround() {
+    ctx.fillStyle = GROUND_COL;
+    ctx.fillRect(0, H - GROUND_H, W, GROUND_H);
+    ctx.fillStyle = GROUND_LINE;
+    ctx.fillRect(0, H - GROUND_H, W, 6);
+
+    // Scrolling ground lines
+    if (state === 'playing') groundX = (groundX - PIPE_SPEED) % 40;
+    ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+    ctx.lineWidth = 2;
+    for (let x = groundX; x < W; x += 40) {
+      ctx.beginPath();
+      ctx.moveTo(x, H - GROUND_H + 6);
+      ctx.lineTo(x, H);
+      ctx.stroke();
+    }
+  }
+
+  function drawGarrett() {
+    ctx.save();
+    const cx = garrett.x + GARRETT_W / 2;
+    const cy = garrett.y + GARRETT_H / 2;
+    ctx.translate(cx, cy);
+    ctx.rotate(garrett.rotation * Math.PI / 180);
+
+    if (spriteLoaded) {
+      ctx.drawImage(garrettImg, -GARRETT_W / 2, -GARRETT_H / 2, GARRETT_W, GARRETT_H);
+    } else {
+      // Fallback: draw a simple placeholder
+      ctx.fillStyle = '#f4a261';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, GARRETT_W / 2, GARRETT_H / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#333';
+      ctx.font = 'bold 10px Courier New';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('G', 0, 0);
+    }
+
+    ctx.restore();
+  }
+
+  function drawScore() {
+    ctx.fillStyle = 'white';
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 4;
+    ctx.font = 'bold 42px Courier New';
+    ctx.textAlign = 'center';
+    ctx.strokeText(score, W / 2, 70);
+    ctx.fillText(score, W / 2, 70);
+  }
+
+  function drawStartScreen() {
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 44px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText('FLAPPY', W / 2, H / 2 - 70);
+    ctx.fillStyle = '#e94560';
+    ctx.fillText('GARRETT', W / 2, H / 2 - 20);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = '18px Courier New';
+    ctx.fillText('tap / space to flap', W / 2, H / 2 + 40);
+
+    if (hiScore > 0) {
+      ctx.font = '16px Courier New';
+      ctx.fillStyle = '#ffd700';
+      ctx.fillText('best: ' + hiScore, W / 2, H / 2 + 75);
+    }
+  }
+
+  function drawDeadScreen() {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = '#e94560';
+    ctx.font = 'bold 48px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText('DEAD', W / 2, H / 2 - 60);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = '26px Courier New';
+    ctx.fillText('score: ' + score, W / 2, H / 2);
+
+    ctx.fillStyle = '#ffd700';
+    ctx.font = '20px Courier New';
+    ctx.fillText('best:  ' + hiScore, W / 2, H / 2 + 36);
+
+    ctx.fillStyle = '#ccc';
+    ctx.font = '16px Courier New';
+    ctx.fillText('tap / space to retry', W / 2, H / 2 + 85);
+  }
+
+  function draw() {
+    drawBackground();
+    pipes.forEach(drawPipe);
+    drawGround();
+    drawGarrett();
+    if (state === 'playing' || state === 'dead') drawScore();
+    if (state === 'start') drawStartScreen();
+    if (state === 'dead') drawDeadScreen();
+  }
+
+  function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  resetGame();
+  loop();
+</script>
+</body>
+</html>
